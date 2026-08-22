@@ -311,7 +311,6 @@ func (c *CLI) showHelp() {
 	fmt.Println("  - 脚本通过 request_permission(type) 主动请求权限")
 	fmt.Println("  - 权限类型: exec, network, file_read, file_write, system")
 	fmt.Println("  - 无回调时默认拒绝所有敏感操作")
-	fmt.Println("  - 支持预授权白名单跳过回调")
 	fmt.Println("  - system权限控制os包危险函数: execute, exit, getenv, remove, rename, tmpname")
 	fmt.Println()
 	fmt.Println("JSON模式 (供外部程序调用):")

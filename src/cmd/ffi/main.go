@@ -43,7 +43,7 @@ func OShinSetPermissionCallback(cCallback unsafe.Pointer) {
 }
 
 // mode 格式: "direct", "route:action_name", "pipeline"
-// configJSON 格式: {"timeout":5000,"pre_authorized":["network","exec"]}
+// configJSON 格式: {"timeout":5000,"max_memory_mb":64}
 //
 //export OShinExecute
 func OShinExecute(cScript *C.char, cParams *C.char, cMode *C.char, cConfigJSON *C.char) *C.char {
@@ -77,14 +77,6 @@ func OShinExecute(cScript *C.char, cParams *C.char, cMode *C.char, cConfigJSON *
 				}
 				if v, ok := cfgMap["max_memory_mb"].(float64); ok {
 					config.MaxMemoryMB = int(v)
-				}
-				if preAuth, ok := cfgMap["pre_authorized"].([]interface{}); ok {
-					config.PreAuthorized = make(map[plugin.PermissionType]bool)
-					for _, v := range preAuth {
-						if s, ok := v.(string); ok {
-							config.PreAuthorized[plugin.PermissionType(s)] = true
-						}
-					}
 				}
 			}
 		}
