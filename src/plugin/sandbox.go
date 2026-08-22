@@ -41,14 +41,12 @@ type SecurityConfig struct {
 	Timeout            int
 	MaxMemoryMB        int
 	PermissionCallback PermissionCallback
-	PreAuthorized      map[PermissionType]bool
 }
 
 func DefaultSecurityConfig() *SecurityConfig {
 	return &SecurityConfig{
-		Timeout:       5000,
-		MaxMemoryMB:   64,
-		PreAuthorized: map[PermissionType]bool{},
+		Timeout:     5000,
+		MaxMemoryMB: 64,
 	}
 }
 
@@ -64,11 +62,6 @@ func NewSandbox(config *SecurityConfig) *Sandbox {
 }
 
 func (s *Sandbox) RequestPermission(req PermissionRequest) bool {
-	// 预授权检查
-	if s.config.PreAuthorized != nil && s.config.PreAuthorized[req.Type] {
-		return true
-	}
-
 	// 无回调则拒绝所有
 	if s.config.PermissionCallback == nil {
 		return false
