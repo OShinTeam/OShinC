@@ -26,12 +26,16 @@ import "C"
 import (
 	"encoding/json"
 	"strings"
+	"time"
 	"unsafe"
 
 	"oshin-core/plugin"
 )
 
 var version = "1.0.0" // 版本号，可通过 -ldflags "-X main.version=xxx" 注入
+
+// 全局自定义函数注册表：跨 OShinExecute 调用保持注册
+var globalCustomRegistry = plugin.NewCustomFunctionRegistry()
 
 // 设置权限回调函数。宿主程序必须在首次 Execute 之前调用。
 // callback 签名: int callback(perm_type, description, details_json)
@@ -111,10 +115,60 @@ func OShinExecute(cScript *C.char, cParams *C.char, cMode *C.char, cConfigJSON *
 		Params: params,
 	}
 	core := plugin.NewCoreWithConfig(config)
+	core.SetCustomFunctionRegistry(globalCustomRegistry)
 	resp := core.Execute(req)
 
 	data, _ := json.Marshal(resp)
 	return C.CString(string(data))
+}
+
+// 注册自定义函数。宿主程序在 Execute 前调用，注册的全局函数在 Lua 中可直接调用。
+// 参数: name=函数名, arg_count=期望参数个数
+//
+//export OShinRegisterCustomFunction
+func OShinRegisterCustomFunction(cName *C.char, cArgCount C.int) {
+	name := C.GoString(cName)
+	globalCustomRegistry.Register(name, int(cArgCount))
+}
+
+// 前端循环调用：阻塞等待一个待处理的自定义函数调用请求，超时返回 NULL。
+// 返回 JSON: {"id":"...","name":"...","args":[...]}，需调用 OShinFreeString 释放。
+//
+//export OShinWaitCustomFunction
+func OShinWaitCustomFunction(cTimeoutMs C.longlong) *C.char {
+	timeout := time.Duration(cTimeoutMs) * time.Millisecond
+	req, ok := globalCustomRegistry.WaitRequest(timeout)
+	if !ok {
+		return nil
+	}
+	data, _ := json.Marshal(req)
+	return C.CString(string(data))
+}
+
+// 前端返回自定义函数调用结果，唤醒等待中的 Lua 调用。
+// 参数: id=请求ID, result_json=结果JSON, error_msg=错误信息(可为NULL)
+// 返回 1=已交付, 0=无效ID
+//
+//export OShinReturnCustomFunctionResult
+func OShinReturnCustomFunctionResult(cID *C.char, cResultJSON *C.char, cError *C.char) C.int {
+	id := C.GoString(cID)
+	errMsg := ""
+	if cError != nil {
+		errMsg = C.GoString(cError)
+	}
+
+	var value interface{}
+	if cResultJSON != nil {
+		resultJSON := C.GoString(cResultJSON)
+		if resultJSON != "" {
+			_ = json.Unmarshal([]byte(resultJSON), &value)
+		}
+	}
+
+	if globalCustomRegistry.ReturnResult(id, value, errMsg) {
+		return 1
+	}
+	return 0
 }
 
 //export OShinFreeString

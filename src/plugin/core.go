@@ -38,6 +38,7 @@ type PluginResponse struct {
 type Core struct {
 	securityConfig *SecurityConfig
 	sandbox        *Sandbox
+	customFuncs    *CustomFunctionRegistry
 	LogWriter      io.Writer
 }
 
@@ -46,6 +47,7 @@ func NewCore() *Core {
 	return &Core{
 		securityConfig: config,
 		sandbox:        NewSandbox(config),
+		customFuncs:    NewCustomFunctionRegistry(),
 		LogWriter:      os.Stdout,
 	}
 }
@@ -54,8 +56,29 @@ func NewCoreWithConfig(config *SecurityConfig) *Core {
 	return &Core{
 		securityConfig: config,
 		sandbox:        NewSandbox(config),
+		customFuncs:    NewCustomFunctionRegistry(),
 		LogWriter:      os.Stdout,
 	}
+}
+
+// RegisterCustomFunction 注册自定义函数（前端通过 FFI 调用）
+func (c *Core) RegisterCustomFunction(name string, argCount int) {
+	c.customFuncs.Register(name, argCount)
+}
+
+// SetCustomFunctionRegistry 注入共享注册表（FFI 跨调用保持注册）
+func (c *Core) SetCustomFunctionRegistry(reg *CustomFunctionRegistry) {
+	c.customFuncs = reg
+}
+
+// WaitCustomFunction 等待前端取请求（前端循环调用）
+func (c *Core) WaitCustomFunction(timeout time.Duration) (CustomFunctionRequest, bool) {
+	return c.customFuncs.WaitRequest(timeout)
+}
+
+// ReturnCustomFunctionResult 前端返回结果
+func (c *Core) ReturnCustomFunctionResult(id string, value interface{}, errMsg string) bool {
+	return c.customFuncs.ReturnResult(id, value, errMsg)
 }
 
 func ExecuteScript(script string, params map[string]interface{}) (interface{}, error) {
@@ -437,6 +460,41 @@ func (c *Core) registerBuiltinFunctions(L *lua.LState) {
 		L.Push(lua.LString(string(decoded)))
 		return 1
 	}))
+
+	c.registerCustomFunctions(L)
+}
+
+// registerCustomFunctions 为每个已注册的自定义函数创建 Lua 全局调用函数
+func (c *Core) registerCustomFunctions(L *lua.LState) {
+	for _, name := range c.customFuncs.Names() {
+		fnName := name
+		L.SetGlobal(fnName, L.NewFunction(func(L *lua.LState) int {
+			// 参数个数校验（注册时声明 argCount，-1 表示不限制）
+			numArgs := L.GetTop()
+			if expect := c.customFuncs.ArgCount(fnName); expect >= 0 && expect != numArgs {
+				L.Push(lua.LNil)
+				L.Push(lua.LString(fmt.Sprintf("custom function %s expects %d args, got %d", fnName, expect, numArgs)))
+				return 2
+			}
+
+			// 收集 Lua 参数并转换为 Go 值
+			args := make([]interface{}, 0, numArgs)
+			for i := 1; i <= numArgs; i++ {
+				args = append(args, c.luaToGoValue(L.Get(i)))
+			}
+
+			// 请求入队并等待前端返回
+			result, err := c.customFuncs.Call(fnName, args)
+			if err != nil {
+				L.Push(lua.LNil)
+				L.Push(lua.LString(err.Error()))
+				return 2
+			}
+
+			L.Push(c.goToLuaValue(L, result))
+			return 1
+		}))
+	}
 }
 
 func (c *Core) executeExternal(program string, scriptOrArg string) (string, error) {
